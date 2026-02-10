@@ -1,0 +1,336 @@
+---
+title: "Loan Default Prediction Machine Learning"
+author: "Parham Esmaeilzadeh"
+date: "2025-10-29"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Problems Statement
+
+This project aims to predict whether a credit card client will default on payment in the next month based on their demographic and financial history. The dataset used is from the University of Irvine Machine Learning Repository and is called "Default of Credit Card Clients" which includes 30,000 customers records with 23 features. In this project, we will develop a logistic regression model from scratch using Sigmoid's function, and optimize it using gradient decent.
+
+This is a classic use case of machine learning valuable to many firms in the financial industry where the prediction allows lender to:
+
+1- Make smarter loan approval decisions
+
+2- Adjust credit limits responsibly
+
+3- Reduce overall risk exposure
+
+## 
+
+## Loading the Data
+
+```{r}
+{library(dplyr)}
+data = read.csv("cdp.csv")
+head(data)
+
+```
+
+There are two problems with this data set that we can see here. The first is the column heads are x, x1,x2... and the first row below is the descriptive column headers. We would like to have the first row as the column heads instead of what it is now to reduce problems later on. Also the last column is dedicated to whether the next payment is going to default or not. However, the name is too long and not very easy to work with. We will need to change that as well.
+
+```{r}
+data = read.csv("cdp.csv", skip = 1, header = TRUE)
+names(data)[names(data) == "default.payment.next.month"] = "DEFAULT"
+head(data)
+```
+
+## Checking for missing values
+
+```{r}
+sum(is.na(data))
+data = subset(data, MARRIAGE %in% c(1,2,3))
+```
+
+As we can see there are not any missing values in this dataset, we can move on to the next section. Before we continue, it is important to understand what each value represents in this table before we move onto logistic regression.
+
+## Variables Information
+
+Information below is taken from data provider's website at <https://archive.ics.uci.edu/dataset/350/default+of+credit+card+clients>
+
+**LIMIT_Balance:** Amount of given credit to the borrower
+
+**Gender**: 1= male; 2=female
+
+**Education**: 1= graduate school; 2= university; 3= high school; 4= others.
+
+**Marital Status**: 1=married; 2= single; 3=others.
+
+**Age**: Age in Years
+
+**Pay_0 - Pay_6**: History of past payments (From April to September 2005). This follows a measurement scale for repayment status.
+
+-1 = Pay Duly (On time); 1= payment delay for one month; 2= payment delay for two months; ...
+
+8 = payment delay for 8 months; 9 = payment delay for 9 months and above.
+
+**Bill_AMT1 - Bill_AMT6**: Amount of bill statement Bill_AMT1 is the statement amount in September 2005 and Bill_AMT6 is the statement amount in April.
+
+**Pay_AMT1 - Pay_AMT6** : Amount of previous payments Pay_AMT1 is the amount paid in SEP 2005 and Pay_AMT6 is the amount paid in AUG 2005
+
+**Default:** 1 = Client Defaults on their loan; 0 = Client Does not Default on their loan.
+
+## Exploring The Data
+
+Exploring data is a fundamental and important part of Data Science. This is where we can ask question about the data and answer them to understand what direction we can go and what information we can extract from the data.
+
+The first question to ask in this case would be regarding the percentage of over all people that default on their loan. Let's explore this:
+
+```{r}
+table(data$DEFAULT)
+prop.table(table(data$DEFAULT))*100
+
+```
+
+Lets plot our findings for better understanding:
+
+```{r}
+library(ggplot2)
+ggplot(data, aes(x = DEFAULT)) +
+  geom_bar(fill = "blue") + 
+  labs(title = "Default vs Non-Default",
+       x = "Default (1 = yes, 0 = no)",
+       y = "Frequency")
+```
+
+As we can see 77.88% of people DO NOT default on their loans. We will focus on the remaining 22.12% to discover the attributes that contribute to them defaulting on their loan.
+
+### How does the borrower's age effect their likelihood of defaulting on their loan?
+
+```{r}
+data$DEFAULT = as.factor(data$DEFAULT)
+ggplot(data, aes(x = AGE, fill = DEFAULT)) + 
+  geom_density(alpha = 0.4)+
+  labs(title = "Age Distribution by Default status",
+       x = "Age",
+       y = "Density") + 
+  theme_minimal()
+```
+
+By looking at this age distribution for defaulting and non-defaulting clients, we can conclude that age is not a strong predictor for credit default. While defaulters seems to be younger on average the difference is minimal. This brings us to the next idea, which would be to explore how one's financial responsibilities would effect their risk of defaulting. The best feature for measuring financial responsibly level in this dataset is martial status of a client.
+
+```{r}
+
+data$MARRIAGE = as.factor(data$MARRIAGE)
+data$DEFAULT = as.factor(data$DEFAULT)
+
+ggplot(data, aes(x = MARRIAGE, fill = DEFAULT )) + 
+  geom_bar(position = "fill") + 
+  labs(title = "Default Rate By Marital Status",
+       x = "Marital Status(1 = Married, 2 = Single, 3 = Other)",
+       y = "Proportion",
+       fill = "Default") + 
+  scale_y_continuous(labels = scales::percent_format())+
+  theme_minimal()
+```
+
+The plot, in this case does not indicate a strong relationship between marital status and defaulting on loans. This also is considered a weak predictor. Next, would be to explore payment behavior, in this case we will focus on the most recent payment.
+
+```{r}
+ggplot(data, aes(x = factor(PAY_0), fill = DEFAULT)) + 
+  geom_bar(position = "fill") + 
+  labs(
+    title = "Default Rate by most Recent Payments",
+    x = "Pay_0 (Most recent Payment Status)",
+    y = "Proportion",
+    fill = "Default"
+  ) + 
+  scale_y_continuous(labels = scales::percent_format())+
+  theme_minimal()
+```
+
+**As as reminder:**
+
+Pay_0 = -2, -1, 0 –\> On time or early payments
+
+Pay *0 \> 0 –\> number of months of late payments(ie: Pay*\_0 = 2 means two months late)
+
+In this case we can see the most recent payment is a good indicator of one's chance of defaulting on their loan as we would expect. It seems personal attributes are not good direct indicators of ones chances of defaulting on their loans. They perhaps contribute to non-direct indicators through feature engineering. Next we will take a look at Credit limit vs default before moving onto the logistic regression.
+
+```{r}
+ggplot(data,aes(x = LIMIT_BAL, color = DEFAULT , fill = DEFAULT)) + 
+  geom_density(alpha = 0.3)+
+  scale_x_log10(labels = scales::comma) + 
+  labs(
+    title = "Credit Limit Distribution by Default Status (Log Scale)",
+    x = "Credit limit (Log scale)",
+    y = "Density",
+    color = "Default",
+    fill= "Default"
+  ) + 
+  theme_minimal()
+```
+
+This graphs shows moderate correlation between people who default the amount of credit they are given. We can see people with lower credit limits tend to be more at risk of credit default.
+
+## Logistic Regression
+
+$$
+\sigma(z) = \frac{1}{1+e^{-z}}$$
+
+This is the Sigmoids function which is used in the Logistic Regression algorithm. This is a classification algorithm that will help us understand how likely someone is to default on their loan. Where:
+
+$$
+z = \beta_0 + \beta_1x_1 + \beta_2x_2 + ...+ \beta_nx_n
+$$
+
+$$
+\beta :Parameters \ (Weights) \ ; \ x: input \ feautures
+$$
+
+Where the output of the function is a number from 0 to 1 which tells us the probability that the output belongs to a class given the input data. In this case our classes would be default on loan and not defaulting on loan.
+
+## Cost Function
+
+$$
+J(\beta) = -\frac{1}{m} \sum_{i=1}^{m} \Big[y^{(i)} \log\big(h_\beta(x^{(i)})\big)+
+\big(1-y^{(i)}\big)\log\big(1-h_\beta(x^{(i)})\big)\Big]
+$$
+
+where:
+
+$m:$ Number of training examples
+
+$y^{(i)}:$ True label (1 or 0)
+
+$h_\beta (x^{(i)}):$ Predicted Probability from sigmoid's function
+
+$\beta:$ Model parameter (Weights)
+
+This cost function finds the average penalty for wrong predictions. The log inside of this function ensures that wrong predictions get punished. This ensures a convex optimization which makes the training more reliable. We will later see this function in action during training.
+
+## Gradient Decent
+
+$$
+\frac{\partial J(\beta)}{\partial \beta_j} =  \frac{1}{m} \sum_{i=1}^{m} \left(h_\beta(x^{(i)}) - y^{(i)} \right) x_j^{(i)}
+$$
+
+where:
+
+$\beta_j:$ Parameter(weight)
+
+$x_{(j)}^{(i)}:$ Value of feature j for observation i
+
+$y^{(i)}:$ True label for observation i
+
+$h_\beta(x^{(i)}):$ Predicted probability
+
+The goal of the gradient decent function is to minimize cost function. It uses the partial derivatives of the cost function with respect to each feature to move towards the minimum of the cost function.
+
+## Implementation of Logistic Regression
+
+We first prepare the Modeling dataset and define Sigmoid's function. We first select our chosen features, and define our target variable DEFAULT as a numeric value to ensure compatibility with mathematical operations. Then the two matrices were formed as they are needed to calculate $(z)$ in the Sigmoid's function.
+
+```{r}
+credit_data = data %>% select(LIMIT_BAL, AGE, PAY_0, DEFAULT)
+
+credit_data$DEFAULT = as.numeric(credit_data$DEFAULT)
+
+X = as.matrix(credit_data[, c("LIMIT_BAL","AGE","PAY_0")])
+y = as.matrix(credit_data$DEFAULT)
+
+X = scale(X)
+X = cbind(Intercept = 1, X)
+
+sigmoid = function(z){
+  1/(1 + exp(-z))
+}
+```
+
+Now, feature scaling is much needed. (This was added after the first implementation of this model). Since the range of AGE is in 10s and the range of PAY_0 and LIMIT_BAL is in 1,000s and 100,000s we face an imbalance and therefore an inaccurate accuracy for our model. (First round achieved an accuracy of 22%)
+
+```{r}
+features = credit_data[, c("LIMIT_BAL", "AGE", "PAY_0")]
+features_scaled = scale(features)
+
+X = as.matrix(cbind(Intercept = 1, features_scaled))
+y = ifelse(credit_data$DEFAULT == 2,1,0)
+```
+
+In this section we implement the mathematics components mentioned above. The first function compute_cost calculates our cost function also called log loss which we used in this case since our prediction feature will be binary. Then we move onto the gradient decent function which itteratively adjusts and minimizes the model coefficients.
+
+```{r}
+compute_cost = function(X, y, beta){
+  m = length(y)
+  predictions = sigmoid(X %*% beta)
+  cost = -(1/m) * sum(y * log(predictions) + (1-y) * log(1-predictions))
+  return(cost)
+}
+
+gradient_decent = function(X, y, beta, alpha, iterations){
+  m = length(y)
+  cost_history = numeric(iterations)
+  
+  for (i in 1:iterations){
+    predictions = sigmoid( X %*% beta)
+    gradient = (1/m) * t(X) %*% (predictions - y)
+    beta = beta - alpha * gradient
+    cost_history[i] = compute_cost(X, y, beta)
+  }
+  return(list(beta = beta, cost_history = cost_history))
+}
+```
+
+Now, we initialize and train the logistic regression model using our defined functions.
+
+```{r}
+beta = matrix(0, nrow = ncol(X) , ncol =1)
+alpha = 0.05
+iterations = 5000
+
+model = gradient_decent(X, y, beta, alpha, iterations)
+
+beta_final = model$beta
+cost_history = model$cost_history
+
+```
+
+We can plot cost to show convergence and learning as we move forward with iterations.
+
+```{r}
+plot(cost_history, type = "l",
+     main = "cost vs Iterations",
+     xlab = "iterations",
+     ylab = "Cost J(beta)")
+```
+
+This shows us that the model is learning perfectly. As the number of iterations increases our cost decreases.
+
+## Evaluation
+
+```{r}
+y= ifelse(credit_data$DEFAULT == 2,1,0)
+y[y==2] = 1
+
+pred_probs = sigmoid(X %*% beta_final)
+preds = ifelse(pred_probs >= 0.43, 1, 0)
+
+confusion_matrix = table(Predected = preds, Actual = y)
+confusion_matrix
+
+accuracy = sum(diag(confusion_matrix)) / sum(confusion_matrix)
+accuracy
+```
+
+After scaling the features, this model achieved an accuracy of \~82% which is higher than the naive baseline of 78%. This is very decent however it is still affected by the dataset's imbalance since only 22% of clients default. In the previous version of model. We only achieved an accuracy of 22% which was approximately the same as the percentage of people who default on their loan. Feature scaling closed the large gap between the ranges of our features.
+
+## Future Improvements Suggestions 
+
+There are many more ways we can incorporate to increase and maximize the accuracy of this model to near 91%. Here are some suggestions and topics to explore for a potential boost in accuracy:
+
+-   Incorporate all 23 features instead of just 3.
+
+-   Plot decision boundary to visualize whether over fit or under fit is present.
+
+-   Depending on the last bullet point, incorporate regularization function to battle over fit/under fit
+
+## Conclusion
+
+In this project, we implemented logistic regression from scratch to predict credit default. The process included data cleaning and processing, exploratory statistical data analysis, feature selection, scaling, and the implementation of gradient decent function. This model was able to achieve a 82% accuracy at its final iteration. During the process of developing this model, I got to learn much more about the R langue. I was also very interested in fine-tuning this model and learn more about the mechanics of logistic regression. The first iteration of this model achieved a accuracy of 22% which was due to the large difference in ranges of our features. By implementing feature scaling the accuracy jumped from 22% to 82%. In the first part of data exploration, the relationship between different features and DEFAULT was explored to choose the ones that contribute most to effect the DEFAULT feature. Finally last payment, credit limit and age were chosen. There is quite more that can be done in the future to increase the accuracy of this model even more to 91%.
